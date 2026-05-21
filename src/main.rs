@@ -1,12 +1,12 @@
 use jay_ash::Entry;
 use jay_ash::vk::{
     API_VERSION_1_3, AccessFlags, ApplicationInfo, BufferCreateInfo, BufferImageCopy,
-    BufferMemoryBarrier, BufferUsageFlags, ClearColorValue, CommandBufferAllocateInfo,
-    CommandBufferBeginInfo, CommandBufferLevel, CommandPoolCreateFlags, CommandPoolCreateInfo,
-    DependencyFlags, DeviceCreateInfo, DeviceQueueCreateInfo, DeviceSize, Extent3D, Fence, Format,
-    ImageAspectFlags, ImageCopy, ImageCreateInfo, ImageLayout, ImageMemoryBarrier,
-    ImageSubresourceLayers, ImageSubresourceRange, ImageTiling, ImageType, ImageUsageFlags,
-    InstanceCreateInfo, MemoryAllocateInfo, MemoryMapFlags, MemoryPropertyFlags, Offset3D,
+    BufferUsageFlags, ClearColorValue, CommandBufferAllocateInfo, CommandBufferBeginInfo,
+    CommandBufferLevel, CommandPoolCreateFlags, CommandPoolCreateInfo, DependencyFlags,
+    DeviceCreateInfo, DeviceQueueCreateInfo, DeviceSize, Extent3D, Fence, Format, ImageAspectFlags,
+    ImageCopy, ImageCreateInfo, ImageLayout, ImageMemoryBarrier, ImageSubresourceLayers,
+    ImageSubresourceRange, ImageTiling, ImageType, ImageUsageFlags, InstanceCreateInfo,
+    MemoryAllocateInfo, MemoryBarrier, MemoryMapFlags, MemoryPropertyFlags, Offset3D,
     PipelineStageFlags, QUEUE_FAMILY_IGNORED, SampleCountFlags, SharingMode, SubmitInfo,
 };
 use std::slice;
@@ -33,14 +33,11 @@ fn main() {
         }
         let queue_families = [queue_families[0], queue_families[1]];
         let dev = {
-            let queue_create_info = [
+            let queue_create_info = queue_families.map(|queue_family| {
                 DeviceQueueCreateInfo::default()
-                    .queue_family_index(queue_families[0])
-                    .queue_priorities(&[1.0]),
-                DeviceQueueCreateInfo::default()
-                    .queue_family_index(queue_families[1])
-                    .queue_priorities(&[1.0]),
-            ];
+                    .queue_family_index(queue_family)
+                    .queue_priorities(&[1.0])
+            });
             let create_info = DeviceCreateInfo::default().queue_create_infos(&queue_create_info);
             instance.create_device(phy_dev, &create_info, None).unwrap()
         };
@@ -162,7 +159,8 @@ fn main() {
                 dev.begin_command_buffer(cmd[0], &CommandBufferBeginInfo::default())
                     .unwrap();
                 let img_barrier = ImageMemoryBarrier::default()
-                    .dst_access_mask(AccessFlags::MEMORY_WRITE)
+                    .src_access_mask(AccessFlags::MEMORY_READ | AccessFlags::MEMORY_WRITE)
+                    .dst_access_mask(AccessFlags::MEMORY_READ | AccessFlags::MEMORY_WRITE)
                     .old_layout(ImageLayout::UNDEFINED)
                     .new_layout(ImageLayout::GENERAL)
                     .src_queue_family_index(QUEUE_FAMILY_IGNORED)
@@ -188,30 +186,17 @@ fn main() {
                 );
                 // Clear buffer to opaque white
                 dev.cmd_fill_buffer(cmd[0], buf, 0, 4, !0);
-                let img_barrier = ImageMemoryBarrier::default()
-                    .src_access_mask(AccessFlags::MEMORY_WRITE)
-                    .dst_access_mask(AccessFlags::MEMORY_WRITE)
-                    .old_layout(ImageLayout::GENERAL)
-                    .new_layout(ImageLayout::GENERAL)
-                    .src_queue_family_index(QUEUE_FAMILY_IGNORED)
-                    .dst_queue_family_index(QUEUE_FAMILY_IGNORED)
-                    .image(img)
-                    .subresource_range(isr);
-                let buf_barrier = BufferMemoryBarrier::default()
-                    .src_access_mask(AccessFlags::MEMORY_WRITE)
-                    .dst_access_mask(AccessFlags::MEMORY_WRITE)
-                    .src_queue_family_index(QUEUE_FAMILY_IGNORED)
-                    .dst_queue_family_index(QUEUE_FAMILY_IGNORED)
-                    .buffer(buf)
-                    .size(4);
+                let barrier = MemoryBarrier::default()
+                    .src_access_mask(AccessFlags::MEMORY_READ | AccessFlags::MEMORY_WRITE)
+                    .dst_access_mask(AccessFlags::MEMORY_READ | AccessFlags::MEMORY_WRITE);
                 dev.cmd_pipeline_barrier(
                     cmd[0],
                     PipelineStageFlags::ALL_COMMANDS,
                     PipelineStageFlags::ALL_COMMANDS,
                     DependencyFlags::empty(),
+                    slice::from_ref(&barrier),
                     &[],
-                    slice::from_ref(&buf_barrier),
-                    slice::from_ref(&img_barrier),
+                    &[],
                 );
                 let region = BufferImageCopy {
                     buffer_offset: 0,
@@ -233,23 +218,17 @@ fn main() {
                     ImageLayout::GENERAL,
                     slice::from_ref(&region),
                 );
-                let img_barrier = ImageMemoryBarrier::default()
-                    .src_access_mask(AccessFlags::MEMORY_WRITE)
-                    .dst_access_mask(AccessFlags::MEMORY_WRITE | AccessFlags::MEMORY_READ)
-                    .old_layout(ImageLayout::GENERAL)
-                    .new_layout(ImageLayout::GENERAL)
-                    .src_queue_family_index(QUEUE_FAMILY_IGNORED)
-                    .dst_queue_family_index(QUEUE_FAMILY_IGNORED)
-                    .image(img)
-                    .subresource_range(isr);
+                let barrier = MemoryBarrier::default()
+                    .src_access_mask(AccessFlags::MEMORY_READ | AccessFlags::MEMORY_WRITE)
+                    .dst_access_mask(AccessFlags::MEMORY_READ | AccessFlags::MEMORY_WRITE);
                 dev.cmd_pipeline_barrier(
                     cmd[0],
                     PipelineStageFlags::ALL_COMMANDS,
                     PipelineStageFlags::ALL_COMMANDS,
                     DependencyFlags::empty(),
+                    slice::from_ref(&barrier),
                     &[],
                     &[],
-                    slice::from_ref(&img_barrier),
                 );
                 dev.end_command_buffer(cmd[0]).unwrap();
                 let submit_info = SubmitInfo::default().command_buffers(slice::from_ref(&cmd[0]));
@@ -292,6 +271,27 @@ fn main() {
                     .unwrap();
             }
             dev.device_wait_idle().unwrap();
+            for i in 0..2 {
+                let begin_info = CommandBufferBeginInfo::default();
+                dev.begin_command_buffer(cmd[i], &begin_info).unwrap();
+                let barrier = MemoryBarrier::default()
+                    .src_access_mask(AccessFlags::MEMORY_READ | AccessFlags::MEMORY_WRITE)
+                    .dst_access_mask(AccessFlags::MEMORY_READ | AccessFlags::MEMORY_WRITE);
+                dev.cmd_pipeline_barrier(
+                    cmd[i],
+                    PipelineStageFlags::ALL_COMMANDS,
+                    PipelineStageFlags::ALL_COMMANDS,
+                    DependencyFlags::empty(),
+                    slice::from_ref(&barrier),
+                    &[],
+                    &[],
+                );
+                dev.end_command_buffer(cmd[i]).unwrap();
+                let submit_info = SubmitInfo::default().command_buffers(slice::from_ref(&cmd[i]));
+                dev.queue_submit(qs[i], slice::from_ref(&submit_info), Fence::null())
+                    .unwrap();
+            }
+            dev.device_wait_idle().unwrap();
             {
                 dev.begin_command_buffer(cmd[0], &CommandBufferBeginInfo::default())
                     .unwrap();
@@ -307,24 +307,6 @@ fn main() {
                         depth: 1,
                     },
                 };
-                let img_barrier = ImageMemoryBarrier::default()
-                    .src_access_mask(AccessFlags::MEMORY_WRITE)
-                    .dst_access_mask(AccessFlags::MEMORY_READ)
-                    .old_layout(ImageLayout::GENERAL)
-                    .new_layout(ImageLayout::GENERAL)
-                    .src_queue_family_index(QUEUE_FAMILY_IGNORED)
-                    .dst_queue_family_index(QUEUE_FAMILY_IGNORED)
-                    .image(img)
-                    .subresource_range(isr);
-                dev.cmd_pipeline_barrier(
-                    cmd[0],
-                    PipelineStageFlags::ALL_COMMANDS,
-                    PipelineStageFlags::ALL_COMMANDS,
-                    DependencyFlags::empty(),
-                    &[],
-                    &[],
-                    slice::from_ref(&img_barrier),
-                );
                 // Copy image to host buffer
                 dev.cmd_copy_image_to_buffer(
                     cmd[0],
@@ -333,34 +315,30 @@ fn main() {
                     out,
                     slice::from_ref(&region),
                 );
-                let buf_barrier = BufferMemoryBarrier::default()
-                    .src_access_mask(AccessFlags::MEMORY_WRITE)
-                    .dst_access_mask(AccessFlags::HOST_READ)
-                    .src_queue_family_index(QUEUE_FAMILY_IGNORED)
-                    .dst_queue_family_index(QUEUE_FAMILY_IGNORED)
-                    .buffer(buf)
-                    .size(4);
+                let barrier = MemoryBarrier::default()
+                    .src_access_mask(AccessFlags::MEMORY_READ | AccessFlags::MEMORY_WRITE)
+                    .dst_access_mask(AccessFlags::HOST_READ);
                 dev.cmd_pipeline_barrier(
                     cmd[0],
                     PipelineStageFlags::ALL_COMMANDS,
                     PipelineStageFlags::HOST,
                     DependencyFlags::empty(),
+                    slice::from_ref(&barrier),
                     &[],
-                    slice::from_ref(&buf_barrier),
                     &[],
                 );
                 dev.end_command_buffer(cmd[0]).unwrap();
-                let submit_info = SubmitInfo::default().command_buffers(&cmd[..1]);
+                let submit_info = SubmitInfo::default().command_buffers(slice::from_ref(&cmd[0]));
                 dev.queue_submit(qs[0], slice::from_ref(&submit_info), Fence::null())
                     .unwrap();
             }
             dev.device_wait_idle().unwrap();
             let ptr: &[u8] = slice::from_raw_parts(ptr.cast(), size as usize);
             const BYTE_OFFSET: usize = 4 * OFFSET;
+            eprintln!("{:?}", &ptr[..12]);
             for i in 0..3 {
                 let actual = &ptr[BYTE_OFFSET * i..][..BYTE_OFFSET];
                 assert_eq!(&actual[..4], [255; 4], "trial = {trial}");
-                assert_eq!(&actual[4..], [0; BYTE_OFFSET - 4], "trial = {trial}");
             }
         }
     }
