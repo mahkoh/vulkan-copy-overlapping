@@ -239,6 +239,27 @@ fn main() {
             for i in 0..2 {
                 let begin_info = CommandBufferBeginInfo::default();
                 dev.begin_command_buffer(cmd[i], &begin_info).unwrap();
+                let barrier = MemoryBarrier::default()
+                    .src_access_mask(AccessFlags::MEMORY_READ | AccessFlags::MEMORY_WRITE)
+                    .dst_access_mask(AccessFlags::MEMORY_READ | AccessFlags::MEMORY_WRITE);
+                dev.cmd_pipeline_barrier(
+                    cmd[i],
+                    PipelineStageFlags::ALL_COMMANDS,
+                    PipelineStageFlags::ALL_COMMANDS,
+                    DependencyFlags::empty(),
+                    slice::from_ref(&barrier),
+                    &[],
+                    &[],
+                );
+                dev.end_command_buffer(cmd[i]).unwrap();
+                let submit_info = SubmitInfo::default().command_buffers(slice::from_ref(&cmd[i]));
+                dev.queue_submit(qs[i], slice::from_ref(&submit_info), Fence::null())
+                    .unwrap();
+            }
+            dev.device_wait_idle().unwrap();
+            for i in 0..2 {
+                let begin_info = CommandBufferBeginInfo::default();
+                dev.begin_command_buffer(cmd[i], &begin_info).unwrap();
                 let region = ImageCopy {
                     src_subresource: isl,
                     src_offset: Offset3D { x: 0, y: 0, z: 0 },
